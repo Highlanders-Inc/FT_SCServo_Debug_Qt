@@ -743,14 +743,21 @@ void MainWindow::onDataAnalysisTimerTimeout()
 
 void MainWindow::onProgTimerTimeout()
 {
+    // 修正: 繰り返しタイマーのまま使うとコールバックが積み上がる
+    // search_timer_ と同じパターン: 先頭で止めて末尾で再起動する
+    prog_timer_->stop();
+
     if(ui->tabWidget->currentIndex() != 1)
+    {
+        prog_timer_->start(50);
         return;
+    }
 
-    if(!isServoValidNow())
+    if(!isServoValidNow() || is_mem_writing_)
+    {
+        prog_timer_->start(50);
         return;
-
-    if(is_mem_writing_)
-        return;
+    }
 
     // 表に表示されている行の値のみ更新する
     int firstVisibleRow = ui->memoryTableView->indexAt(ui->memoryTableView->viewport()->rect().topLeft()).row();
@@ -779,6 +786,8 @@ void MainWindow::onProgTimerTimeout()
             ui->memoryTableView->model()->setData(ui->memoryTableView->model()->index(i,2), QString::number(val));
         }
     }
+
+    prog_timer_->start(50);
 }
 
 void MainWindow::onMemoryTableSelection()
@@ -906,8 +915,15 @@ void MainWindow::onGraphTimerTimeout()
 
 void MainWindow::onServoReadTimerTimeout()
 {
+    // 修正: 繰り返しタイマーのままだとシリアル待ちでコールバックが積み上がる
+    // search_timer_ と同じパターン: 先頭で止め、処理後に再起動する
+    servo_read_timer_->stop();
+
     if(ui->tabWidget->currentIndex() != 0)
+    {
+        servo_read_timer_->start(10);
         return;
+    }
     
     static int count = 0;
     if (isServoValidNow())
@@ -959,8 +975,9 @@ void MainWindow::onServoReadTimerTimeout()
             }
         }
 
-
         count++;
         count %= 3;
     }
+
+    servo_read_timer_->start(10);
 }

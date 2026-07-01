@@ -410,7 +410,7 @@ int SCSerial::write(uint8_t *n_dat, int n_len) {
 
 int SCSerial::read(uint8_t *n_dat, int n_len) {
     if(serial_->bytesAvailable() < n_len)
-        serial_->waitForReadyRead(100);
+        serial_->waitForReadyRead(timeout_);  // 修正: 固定100msではなくユーザー設定値を使用
     return serial_->read(reinterpret_cast<char *>(n_dat), n_len);
 }
 
