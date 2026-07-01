@@ -811,10 +811,12 @@ void MainWindow::onMemSetButtonClicked()
     {
         // Toso: STSサーボ以外に対応する
         uint8_t val = ui->memSetLineEdit->text().toShort();
-        scserial_->write_byte(select_servo_.id_, 55, 0); // unlock
+        uint8_t lock_addr = (select_servo_.model_ == feetech_servo::ModelSeries::SCS) ? 48 : 55;
+        scserial_->write_byte(select_servo_.id_, lock_addr, 0); // unlock
         scserial_->write_byte(select_servo_.id_, address, val);
-        scserial_->write_byte(select_servo_.id_, 55, 1); // lock
+        scserial_->write_byte(select_servo_.id_, lock_addr, 1); // lock
         select_servo_.id_ = val;
+        return; // ← fall-through防止も追加
     }
     if(size == 2)
     {
