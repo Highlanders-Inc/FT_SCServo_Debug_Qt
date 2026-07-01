@@ -2,3 +2,16 @@
 *.user
 deb_root
 *.deb
+/.qmake.stash
+/FT_SCServo_Debug_Qt
+/Makefile
+/main.o
+/mainwindow.o
+/moc_mainwindow.cpp
+/moc_mainwindow.o
+/moc_predefs.h
+/moc_simpegraphwiget.cpp
+/moc_simpegraphwiget.o
+/scserial.o
+/simpegraphwiget.o
+/ui_mainwindow.h
