@@ -1,8 +1,19 @@
 #!/bin/bash
-SCRIPT_DIR=$(cd $(dirname $0); pwd)
-cd $SCRIPT_DIR
+set -e  # Bug 4修正: エラーで即終了
 
-git clone https://github.com/Kotakku/FT_SCServo_Debug_Qt.git
-cd FT_SCServo_Debug_Qt/
+# Bug 1修正: GitHub からクローンせず /repo にマウントされたローカルソースを使う
+echo "Copying source from /repo..."
+cp -r /repo/. /build/src/
+
+cd /build/src
+
+echo "Running qmake..."
 qmake .
-make
+
+echo "Running make..."
+make -j$(nproc)
+
+echo "Copying binary to /build/..."
+cp ${COPY_TARGET_BIN:-FT_SCServo_Debug_Qt} /build/
+
+echo "Build successful."

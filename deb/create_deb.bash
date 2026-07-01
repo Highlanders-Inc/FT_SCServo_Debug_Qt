@@ -1,34 +1,56 @@
 #!/bin/bash
+set -e  # Bug 4修正: エラーで即終了
+
 SCRIPT_DIR=$(cd $(dirname $0); pwd)
+REPO_ROOT=$SCRIPT_DIR/..          # ローカルのリポジトリルート
 COPY_TARGET_BIN=FT_SCServo_Debug_Qt
-# amd64 or arm64
 ARCH=${1:-amd64}
-MOUNT_TARGET=./build
-DEB_ROOT=./deb_root
-VERSION=${2:-0.0.1}
+BUILD_DIR=$SCRIPT_DIR/build       # Bug 2修正: 絶対パスを使う
+DEB_ROOT=$SCRIPT_DIR/deb_root
+VERSION=${2:-1.1.0}
 DEB_NAME=ft-scservo-debug-qt_${VERSION}_${ARCH}
+
+# 前回のビルド成果物を削除
+rm -rf ${BUILD_DIR}/src ${BUILD_DIR}/${COPY_TARGET_BIN} ${DEB_ROOT}
+mkdir -p ${BUILD_DIR} ${DEB_ROOT}/usr/bin ${DEB_ROOT}/DEBIAN
 
 if [ ${ARCH} == "arm64" ]; then
     docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 fi
 
-# select arch
+# Docker イメージをビルド
 docker build -t deb_build -f ${SCRIPT_DIR}/dockerfile.${ARCH} ${SCRIPT_DIR}
-docker run -it --rm -v ${MOUNT_TARGET}:/build deb_build /build/build.bash
 
-mkdir -p ${DEB_ROOT}/usr/bin ${DEB_ROOT}/DEBIAN/
-cp ${MOUNT_TARGET}/FT_SCServo_Debug_Qt/FT_SCServo_Debug_Qt ${DEB_ROOT}/usr/bin/
+# Bug 1修正: ローカルのソースをマウントしてビルド (GitHub クローン不要)
+# Bug 3修正: -t を除去 (TTY 不要)
+docker run --rm \
+    -v ${REPO_ROOT}:/repo:ro \
+    -v ${BUILD_DIR}:/build \
+    deb_build bash /build/build.bash
 
-echo "Package: ft-scservo-debug-qt" > ${DEB_ROOT}/DEBIAN/control
-echo "Version: $VERSION" >> ${DEB_ROOT}/DEBIAN/control
-echo "Section: base" >> ${DEB_ROOT}/DEBIAN/control
-echo "Priority: optional" >> ${DEB_ROOT}/DEBIAN/control
-echo "Architecture: $ARCH" >> ${DEB_ROOT}/DEBIAN/control
-echo "Depends: libqt5serialport5-dev, qtbase5-dev" >> ${DEB_ROOT}/DEBIAN/control
-echo "Maintainer: Kotakku <Kotakkucu@gmail.com>" >> ${DEB_ROOT}/DEBIAN/control
-echo "Description: FeeTech Servo Debug Qt" >> ${DEB_ROOT}/DEBIAN/control
+# Bug 7修正: バイナリが存在するか確認してから deb を作る
+if [ ! -f ${BUILD_DIR}/${COPY_TARGET_BIN} ]; then
+    echo "Error: binary not found after build. Check Docker build output above." >&2
+    exit 1
+fi
+
+cp ${BUILD_DIR}/${COPY_TARGET_BIN} ${DEB_ROOT}/usr/bin/
+
+# Bug 5修正: Depends に -dev パッケージではなくランタイムライブラリを指定
+cat > ${DEB_ROOT}/DEBIAN/control << CONTROL
+Package: ft-scservo-debug-qt
+Version: $VERSION
+Section: base
+Priority: optional
+Architecture: $ARCH
+Depends: libqt5serialport5, libqt5widgets5, libqt5core5a, libqt5gui5
+Maintainer: Kotakku <Kotakkucu@gmail.com>
+Description: FeeTech Servo Debug Qt
+ A utility for debugging Feetech SCS/STS/HLS series serial bus servo motors.
+CONTROL
 
 dpkg-deb --build -Z xz --root-owner-group ${DEB_ROOT} ${SCRIPT_DIR}/${DEB_NAME}.deb
 
-sudo rm -rf build/FT_SCServo_Debug_Qt deb_root/
-echo "Create deb package done!"
+# Bug 8修正: 変数を使ってクリーンアップ
+rm -rf ${BUILD_DIR}/src ${BUILD_DIR}/${COPY_TARGET_BIN} ${DEB_ROOT}
+echo "Created: ${SCRIPT_DIR}/${DEB_NAME}.deb"
