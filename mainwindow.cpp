@@ -11,6 +11,7 @@
 #include <QIntValidator>
 #include <QRegExpValidator>
 #include <QDir>
+#include <algorithm>
 #include <cmath>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -226,14 +227,8 @@ void MainWindow::setIntLineEdit(QLineEdit *edit)
 
 void MainWindow::selectServoSeries(feetech_servo::ModelSeries series)
 {
-    if(series == feetech_servo::ModelSeries::SCS)
-    {
-        scserial_->set_end(1);
-    }
-    else
-    {
-        scserial_->set_end(0);
-    }
+    // SCS 系のみビッグエンディアン、それ以外はリトルエンディアン
+    scserial_->set_end(series == feetech_servo::ModelSeries::SCS ? 1 : 0);
     select_servo_.model_ = series;
     updatePorgMemTable();
 }
@@ -242,17 +237,22 @@ const std::vector<feetech_servo::MemoryConfig>& MainWindow::getMemConfig(feetech
 {
     switch(series)
     {
-        case feetech_servo::ModelSeries::SCS:
-            return feetech_servo::SCSMemConfig;
-        case feetech_servo::ModelSeries::STS:
-            return feetech_servo::STSMemConfig;
-        case feetech_servo::ModelSeries::SMBL:
-            return feetech_servo::SMBLMemConfig;
-        case feetech_servo::ModelSeries::SMCL:
-            return feetech_servo::SMCLMemConfig;
-        default:
-            return feetech_servo::STSMemConfig;
+        case feetech_servo::ModelSeries::SCS:   return feetech_servo::SCSMemConfig;
+        case feetech_servo::ModelSeries::STS:   return feetech_servo::STSMemConfig;
+        case feetech_servo::ModelSeries::SMBL:  return feetech_servo::SMBLMemConfig;
+        case feetech_servo::ModelSeries::SMCL:  return feetech_servo::SMCLMemConfig;
+        case feetech_servo::ModelSeries::HLS:   return feetech_servo::HLSMemConfig;
+        default:                                return feetech_servo::STSMemConfig;
     }
+}
+
+// MemoryConfig から名前でアドレスを検索する (データ駆動設計)
+// ─── これにより LOCK アドレスや ID アドレスをシリーズ定義から自動取得できる ───
+// 例: findRegisterAddress(model, "Lock")  → SCS=48, STS=55, HLS=55 が自動で返る
+//     findRegisterAddress(model, "ID")    → 全シリーズ共通 5 が返る
+uint8_t MainWindow::findRegisterAddress(feetech_servo::ModelSeries series, const QString& name)
+{
+    return feetech_servo::findRegisterAddress(getMemConfig(series), name);
 }
 
 void MainWindow::writePos(int pos, int time, int speed, int acc)
@@ -261,7 +261,7 @@ void MainWindow::writePos(int pos, int time, int speed, int acc)
     {
         scs_serial_->write_pos(select_servo_.id_, pos, time, speed);
     }
-    else
+    else  // STS / SMBL / SMCL / HLS: SMS_STS 互換プロトコル
     {
         sms_sts_serial_->rotation_mode(select_servo_.id_);
         sms_sts_serial_->write_pos_ex(select_servo_.id_, pos, speed, acc);
@@ -758,6 +758,9 @@ void MainWindow::onProgTimerTimeout()
     if (firstVisibleRow != -1 && lastVisibleRow != -1)
     {
         auto mem_config = getMemConfig(select_servo_.model_);
+        // ─── Crash 3 修正: lastVisibleRow が mem_config の範囲を超えないよう制限 ───
+        // Qt の indexAt(bottomLeft()) は viewport 下端が空白でも有効行番号を返すことがある
+        lastVisibleRow = std::min(lastVisibleRow, static_cast<int>(mem_config.size()) - 1);
         for(int i = firstVisibleRow; i <= lastVisibleRow; i++)
         {
             // メモリ更新
@@ -780,12 +783,20 @@ void MainWindow::onProgTimerTimeout()
 
 void MainWindow::onMemoryTableSelection()
 {
-    QModelIndex selectedRows = ui->memoryTableView->selectionModel()->selectedRows().first();
-    std::size_t row = selectedRows.row();
+    // ─── Crash 1 修正: selectedRows() が空のとき .first() を呼ぶと SIZE_MAX → OOB ───
+    // モデルクリア (updatePorgMemTable) や選択解除時にこの関数が空選択で呼ばれる
+    auto sel = ui->memoryTableView->selectionModel()->selectedRows();
+    if(sel.isEmpty()) return;
+
+    int row = sel.first().row();
+    auto mem_config = getMemConfig(select_servo_.model_);
+    // 行番号がテーブル範囲内かチェック
+    if(row < 0 || row >= static_cast<int>(mem_config.size())) return;
+
     auto index = prog_mem_model_->index(row, 1);
     ui->memLabel->setText(prog_mem_model_->data(index).toString());
     ui->memSetLineEdit->setText(prog_mem_model_->data(prog_mem_model_->index(row, 2)).toString());
-    auto mem_config = getMemConfig(select_servo_.model_);
+
     bool is_readonly = mem_config[row].is_readonly;
     if(is_readonly)
     {
@@ -801,33 +812,68 @@ void MainWindow::onMemoryTableSelection()
 
 void MainWindow::onMemSetButtonClicked()
 {
-    is_mem_writing_ = true;
-    QModelIndex selectedRows = ui->memoryTableView->selectionModel()->selectedRows().first();
-    auto mem_config = getMemConfig(select_servo_.model_);
-    auto &[address, name, size, default_value, dir_bit, is_eprom, is_readonly, min_val, max_val] = mem_config[selectedRows.row()];
+    // ─── Crash 2 修正: 選択なし or 範囲外行番号の場合は早期リターン ───
+    auto sel = ui->memoryTableView->selectionModel()->selectedRows();
+    if(sel.isEmpty()) return;
 
-    // Todo address参照じゃなくする
-    if(address == 5)
+    int row = sel.first().row();
+    auto mem_config = getMemConfig(select_servo_.model_);
+    if(row < 0 || row >= static_cast<int>(mem_config.size())) return;
+
+    is_mem_writing_ = true;
+    auto &[address, name, size, default_value, dir_bit, is_eprom, is_readonly, min_val, max_val] = mem_config[row];
+
+    // ─── データ駆動: LOCK と ID のアドレスを MemoryConfig から動的取得 ───
+    // getLockAddress() のようなハードコードを廃止し、シリーズ定義だけを更新すれば動く
+    uint8_t lock_addr = findRegisterAddress(select_servo_.model_, "Lock");
+    uint8_t id_addr   = findRegisterAddress(select_servo_.model_, "ID");
+
+    if(is_eprom)
     {
-        // Toso: STSサーボ以外に対応する
-        uint8_t val = ui->memSetLineEdit->text().toShort();
-        uint8_t lock_addr = (select_servo_.model_ == feetech_servo::ModelSeries::SCS) ? 48 : 55;
-        scserial_->write_byte(select_servo_.id_, lock_addr, 0); // unlock
-        scserial_->write_byte(select_servo_.id_, address, val);
-        scserial_->write_byte(select_servo_.id_, lock_addr, 1); // lock
-        select_servo_.id_ = val;
-        return; // ← fall-through防止も追加
-    }
-    if(size == 2)
-    {
-        int16_t val = ui->memSetLineEdit->text().toShort();
-        scserial_->write_word(select_servo_.id_, address, val);
+        // EPROM レジスタへの書き込み: unlock → write → lock が必須
+        if(address == id_addr)
+        {
+            // ── ID 変更 ──
+            // EPROM 書き込み後サーボは即座に新 ID で応答するため、
+            // lock コマンドは新 ID に対して送る (公式 Arduino ライブラリ準拠)
+            uint8_t val = static_cast<uint8_t>(ui->memSetLineEdit->text().toShort());
+            scserial_->write_byte(select_servo_.id_, lock_addr, 0); // EPROM unlock (旧ID)
+            scserial_->write_byte(select_servo_.id_, address,   val); // 新ID を EPROM に書込
+            scserial_->write_byte(val,               lock_addr, 1); // EPROM lock  (新ID)
+            select_servo_.id_ = val;
+        }
+        else
+        {
+            // ── ID 以外の EPROM パラメータ (ボーレート, 角度リミット, PIDゲイン等) ──
+            scserial_->write_byte(select_servo_.id_, lock_addr, 0); // EPROM unlock
+            if(size == 2)
+            {
+                int16_t val = ui->memSetLineEdit->text().toShort();
+                scserial_->write_word(select_servo_.id_, address, val);
+            }
+            else
+            {
+                uint8_t val = static_cast<uint8_t>(ui->memSetLineEdit->text().toShort());
+                scserial_->write_byte(select_servo_.id_, address, val);
+            }
+            scserial_->write_byte(select_servo_.id_, lock_addr, 1); // EPROM lock
+        }
     }
     else
     {
-        uint8_t val = ui->memSetLineEdit->text().toShort();
-        scserial_->write_byte(select_servo_.id_, address, val);
+        // SRAM レジスタへの書き込み: unlock/lock 不要、直接書き込む
+        if(size == 2)
+        {
+            int16_t val = ui->memSetLineEdit->text().toShort();
+            scserial_->write_word(select_servo_.id_, address, val);
+        }
+        else
+        {
+            uint8_t val = static_cast<uint8_t>(ui->memSetLineEdit->text().toShort());
+            scserial_->write_byte(select_servo_.id_, address, val);
+        }
     }
+
     is_mem_writing_ = false;
 }
 

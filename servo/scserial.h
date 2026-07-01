@@ -22,10 +22,11 @@ QString getModelType(uint16_t id);
 
 enum ModelSeries
 {
-	SMCL,
-	SMBL,
-	STS,
-	SCS
+    SMCL,  // SM-360M 系 (LOCK=48)
+    SMBL,  // SM-BL 系  (LOCK=55)
+    STS,   // STS 系    (LOCK=55)
+    SCS,   // SCS/SCSCL 系 (LOCK=48)
+    HLS,   // HLSCL 系  (LOCK=55) ── 恒力モード対応
 };
 
 ModelSeries getModelSeries(QString modelName);

@@ -42,6 +42,10 @@ private:
     void selectServoSeries(feetech_servo::ModelSeries series);
     const std::vector<feetech_servo::MemoryConfig>& getMemConfig(feetech_servo::ModelSeries series);
 
+    // MemoryConfig から名前でレジスタアドレスを検索する (データ駆動設計)
+    // 見つからない場合は 0xFF を返す
+    uint8_t findRegisterAddress(feetech_servo::ModelSeries series, const QString& name);
+
     void writePos(int pos, int time, int speed, int acc);
     void syncWritePos(int pos, int time, int speed, int acc);
     void regWritePos(int pos, int time, int speed, int acc);

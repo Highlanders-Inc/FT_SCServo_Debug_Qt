@@ -66,6 +66,15 @@ QString getModelType(uint16_t id)
         SERVO_MODEL(9, 15, "SCS15-2"), 
         SERVO_MODEL(9, 35, "SCS225"), 
         SERVO_MODEL(9, 40, "SCS40-2"), 
+        // HLS 系 (HLSCL) — 恒力モード対応シリーズ
+        // ※ major 番号はハードウェアで要確認。以下は一般的な値を使用。
+        SERVO_MODEL(10, 0,  "HLSXX"),
+        SERVO_MODEL(10, 36, "HLS36"),
+        SERVO_MODEL(10, 40, "HLS40BLH"),
+        SERVO_MODEL(10, 45, "HLS45"),
+        SERVO_MODEL(10, 46, "HLS45L"),
+        SERVO_MODEL(10, 60, "HLS60"),
+        SERVO_MODEL(10, 85, "HLS85"),
     };
 
     if(auto it = model_list.find(id); it != model_list.end())
@@ -82,6 +91,10 @@ ModelSeries getModelSeries(QString modelName)
     if(modelName.startsWith("STS"))
     {
         return STS;
+    }
+    else if(modelName.startsWith("HLS"))   // HLS 系は SC より先に判定する
+    {
+        return HLS;
     }
     else if(modelName.startsWith("SC"))
     {
